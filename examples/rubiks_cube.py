@@ -4,7 +4,6 @@ import itertools
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import cache, cached_property
-from typing import Literal
 
 from interlocking_cycles.cycle import InterlockingCycles
 
@@ -16,6 +15,15 @@ class Axis(int, Enum):
     X = 0
     Y = 1
     Z = 2
+
+    @cache
+    def face(self, positive: bool) -> Face:
+        if self is Axis.X:
+            return Face.RIGHT if positive else Face.LEFT
+        elif self is Axis.Y:
+            return Face.UP if positive else Face.DOWN
+        elif self is Axis.Z:
+            return Face.FRONT if positive else Face.BACK
 
 
 class Color(Enum):
@@ -120,10 +128,10 @@ class Corner:
 @dataclass
 class Edge:
     colors: tuple[Color, Color]
-    rotation: Literal[0, 1]
+    facing: Face
 
     def rotate(self, face: Face, amount: int) -> None:
-        raise NotImplementedError
+        self.facing = self.facing.rotate(face.axis, amount * face.sign)
 
 
 @dataclass
@@ -131,7 +139,8 @@ class Center:
     color: Color
 
     def rotate(self, face: Face, amount: int) -> None:
-        raise NotImplementedError
+        # TODO: Maybe consider rotations of the face
+        pass
 
 
 Piece = Corner | Edge | Center
@@ -141,6 +150,9 @@ def make_square_perimiter(
     radius: int, include_center: bool
 ) -> tuple[tuple[int, int], ...]:
     """Return the coordinates of the perimiter of a square with given radius"""
+    if radius == 0 and include_center:
+        return ((0, 0),)
+
     edge = tuple(
         filter(
             lambda value: True if include_center else value != 0,
@@ -167,9 +179,9 @@ def make_cube_cycle(
     cycle_2d = make_square_perimiter(cycle_radius, include_center)
 
     cycle: tuple[Coordinate, ...] = tuple(
-        (*point[: face.axis], axis_coordinate, *point[face.axis :])
+        (*point[: face.axis], axis_coordinate, *point[face.axis :])  # type: ignore
         for point in cycle_2d
-    )  # type: ignore
+    )
 
     # The negative sign of the face switches the order of the cycle, so it is clockwise
     if face.sign < 0:
@@ -196,20 +208,22 @@ class Cube:
         config: dict[Cycle, tuple[Coordinate, ...]] = {}
         values: dict[Coordinate, Piece] = {}
 
+        # Slice cycles
         # NOTE: Slices are duplicated
         for face in Face:
             for offset in range(1, self.size - 1):
-                axis_coordinate = offset - self.radius
+                axis_coordinate = self.radius - offset
                 if not self.include_center and axis_coordinate >= 0:
                     axis_coordinate += 1
 
                 config[Cycle(face, offset, True)] = make_cube_cycle(
                     face,
-                    axis_coordinate=axis_coordinate,
+                    axis_coordinate=axis_coordinate * face.sign,
                     cycle_radius=self.radius,
                     include_center=self.include_center,
                 )
 
+        # Face cycles
         for face in Face:
             for offset in range(self.amt_rings):
                 cycle = make_cube_cycle(
@@ -221,12 +235,36 @@ class Cube:
 
                 config[Cycle(face, offset, False)] = cycle
 
-                if offset > 0:  # Centers
+                # Center-pieces
+                if offset > 0:
                     values.update(
                         {coordinate: Center(face.color) for coordinate in cycle}
                     )
 
-        # TODO: Edges
+        # Edge-pieces
+        all_axes = set(Axis)
+        for axis in Axis:
+            # The order does not matter because we iterate over the same values
+            axis_1, axis_2 = all_axes - {axis}
+            for first, last in itertools.product(
+                (-self.radius, self.radius), (-self.radius, self.radius)
+            ):
+                coordinate = [0] * 3
+                coordinate[axis_1] = first
+                coordinate[axis_2] = last
+                for value in range(-self.radius + 1, self.radius):
+                    if value == 0 and not self.include_center:
+                        continue
+                    coordinate[axis] = value
+
+                    face_1 = axis_1.face(first > 0)
+                    face_2 = axis_2.face(last > 0)
+
+                    values[tuple(coordinate)] = Edge(  # type: ignore
+                        (face_1.color, face_2.color), face_1
+                    )
+
+        # Corner-pieces
         for x, y, z in itertools.product(
             *((-self.radius, self.radius) for _ in range(3))
         ):
@@ -249,7 +287,6 @@ class Cube:
             )
 
             values[(x, y, z)] = Corner(colors, y_face)
-            # print((x, y, z), values[(x, y, z)].colors, values[(x, y, z)].facing.name)
 
         self.interlocking_cycles = InterlockingCycles[Cycle, Coordinate, Piece](
             config, values
@@ -261,15 +298,17 @@ class Cube:
 
         if offset > 0:
             cycle_id = Cycle(face, offset, True)
-            self.interlocking_cycles.rotate(cycle_id, -amount)
+            self.interlocking_cycles.rotate(cycle_id, -amount * (self.size - 1))
             for position in self.interlocking_cycles.cycles[cycle_id]:
-                position.value.rotate(face, amount * (self.size - 1))
+                position.value.rotate(face, amount)
         else:
             for offset in range(self.amt_rings):
                 cycle_id = Cycle(face, offset, False)
-                self.interlocking_cycles.rotate(cycle_id, -amount)
+                self.interlocking_cycles.rotate(
+                    cycle_id, -amount * (self.size - 1 - 2 * offset)
+                )
                 for position in self.interlocking_cycles.cycles[cycle_id]:
-                    position.value.rotate(face, amount * (self.size - 1 - 2 * offset))
+                    position.value.rotate(face, amount)
                     pass
 
     @property
@@ -287,11 +326,14 @@ class Cube:
         # Copied
         for face in Face:
             face_points: tuple[Coordinate, ...] = tuple(
-                (*point[: face.axis], self.radius * face.sign, *point[face.axis :])
+                (
+                    *point[: face.axis],
+                    self.radius * face.sign,
+                    *point[face.axis :],
+                )  # type: ignore
                 for point in square
-            )  # type: ignore
+            )
 
-            # print(face)
             x_offset = {
                 Face.LEFT: 0,
                 Face.FRONT: 1,
@@ -330,71 +372,119 @@ class Cube:
                 x += self.radius
                 y += self.radius
 
-                piece = self.interlocking_cycles.positions[face_point].value
-                # print("\t", x, y, face_point, piece.colors, piece.facing.name)
-                result[y + self.size * y_offset][
-                    x + self.size * x_offset
-                ] = piece.colors[0].name[0]
-                result[y + self.size * y_offset][
-                    x + self.size * x_offset
-                ] = piece.facing.name[0]
+                result[y + self.size * y_offset][x + self.size * x_offset] = self.color(
+                    face_point, face
+                ).name[0]
 
         return "\n".join("".join(line) for line in reversed(result))
 
+    def related_faces(self, coordinate: Coordinate) -> tuple[Face, ...]:
+        related_faces: list[Face] = []
+        for value, axis in zip(coordinate, Axis):
+            if abs(value) == self.radius:
+                related_faces.append(
+                    {
+                        (Axis.X, False): Face.LEFT,
+                        (Axis.X, True): Face.RIGHT,
+                        (Axis.Y, False): Face.DOWN,
+                        (Axis.Y, True): Face.UP,
+                        (Axis.Z, False): Face.BACK,
+                        (Axis.Z, True): Face.FRONT,
+                    }[(axis, value > 0)]
+                )
+        return tuple(related_faces)
 
-class Cube2:
-    def __init__(self) -> None:
-        self.interlocking_cycles = InterlockingCycles[Face, Coordinate, Corner](
-            {
-                Face.UP: ((1, 1, 1), (-1, 1, 1), (-1, 1, -1), (1, 1, -1)),
-                Face.DOWN: ((1, -1, 1), (1, -1, -1), (-1, -1, -1), (-1, -1, 1)),
-                Face.RIGHT: ((1, 1, 1), (1, 1, -1), (1, -1, -1), (1, -1, 1)),
-                Face.LEFT: ((-1, 1, 1), (-1, -1, 1), (-1, -1, -1), (-1, 1, -1)),
-                Face.FRONT: ((1, 1, 1), (1, -1, 1), (-1, -1, 1), (-1, 1, 1)),
-                Face.BACK: ((1, 1, -1), (-1, 1, -1), (-1, -1, -1), (1, -1, -1)),
-            },
-            {
-                (1, 1, 1): Corner((Color.WHITE, Color.RED, Color.BLUE), Face.UP),
-                (1, -1, 1): Corner((Color.WHITE, Color.RED, Color.GREEN), Face.UP),
-                (-1, -1, 1): Corner((Color.WHITE, Color.ORANGE, Color.GREEN), Face.UP),
-                (-1, 1, 1): Corner((Color.WHITE, Color.ORANGE, Color.BLUE), Face.UP),
-                (1, 1, -1): Corner((Color.YELLOW, Color.RED, Color.BLUE), Face.DOWN),
-                (1, -1, -1): Corner((Color.YELLOW, Color.RED, Color.GREEN), Face.DOWN),
-                (-1, -1, -1): Corner(
-                    (Color.YELLOW, Color.ORANGE, Color.GREEN), Face.DOWN
-                ),
-                (-1, 1, -1): Corner(
-                    (Color.YELLOW, Color.ORANGE, Color.BLUE), Face.DOWN
-                ),
-            },
-        )
+    def color(self, coordinate: Coordinate, face: Face) -> Color:
+        """Return the color of the cube at the given coordinate on the given face"""
+        piece = self.interlocking_cycles.positions[coordinate].value
+        related_faces = self.related_faces(coordinate)
+        assert face in related_faces
 
-    def turn(self, face: Face, amount: int, offset: int = 0) -> None:
-        """Turn the face at the given offset the given amount"""
-        assert offset >= 0
-        if offset > 0:
-            self.interlocking_cycles.rotate(face, amount)
-        for position in self.interlocking_cycles.cycles[face]:
-            position.value.rotate(face, amount)
+        if isinstance(piece, Center):
+            return piece.color
+        elif isinstance(piece, Edge):
+            if face is piece.facing:
+                return piece.colors[0]
+            return piece.colors[1]
+        elif isinstance(piece, Corner):
+            if face is piece.facing:
+                return piece.colors[0]
+            face_order = {
+                (Face.RIGHT, Face.UP, Face.FRONT): (Face.RIGHT, Face.FRONT, Face.UP),
+                (Face.RIGHT, Face.UP, Face.BACK): (Face.RIGHT, Face.UP, Face.BACK),
+                (Face.RIGHT, Face.DOWN, Face.FRONT): (
+                    Face.RIGHT,
+                    Face.DOWN,
+                    Face.FRONT,
+                ),
+                (Face.RIGHT, Face.DOWN, Face.BACK): (Face.RIGHT, Face.BACK, Face.DOWN),
+                (Face.LEFT, Face.UP, Face.FRONT): (Face.LEFT, Face.UP, Face.FRONT),
+                (Face.LEFT, Face.UP, Face.BACK): (Face.LEFT, Face.BACK, Face.UP),
+                (Face.LEFT, Face.DOWN, Face.FRONT): (Face.LEFT, Face.FRONT, Face.DOWN),
+                (Face.LEFT, Face.DOWN, Face.BACK): (Face.LEFT, Face.DOWN, Face.BACK),
+            }[
+                related_faces  # type: ignore
+            ]
+            if face_order[(face_order.index(piece.facing) + 1) % 3] is face:
+                return piece.colors[1]
+            return piece.colors[2]
 
 
 if __name__ == "__main__":
-    from pprint import pprint
 
-    """
-    c = Cube2()
-    pprint(c.interlocking_cycles.cycles)
-    c.turn(Face.RIGHT, -1)
-    print("\n*" * 5)
-    pprint(c.interlocking_cycles.cycles)
-    """
-    c = Cube(2)
-    # pprint(c.interlocking_cycles.cycles)
-    print(c.layout)
-    print("\n*" * 5)
-    # pprint(c.interlocking_cycles.cycles)
-    c.turn(Face.RIGHT, 1)
-    # c.turn(Face.LEFT, -1)
-    print(c.layout)
+    def main() -> None:
+        """
+        from pprint import pprint
+        c = Cube2()
+        pprint(c.interlocking_cycles.cycles)
+        c.turn(Face.RIGHT, -1)
+        print("\n*" * 5)
+        pprint(c.interlocking_cycles.cycles)
+        """
 
-    print(Face.UP.rotate(Axis.X, 1))
+        c = Cube(3)
+        print(c.layout, "\n")
+        c.turn(Face.RIGHT, 1)
+        c.turn(Face.LEFT, -1)
+        print(c.layout, "\n")
+
+        c = Cube(15)
+        print(c.layout, "\n")
+        for offset in range(5):
+            c.turn(Face.RIGHT, 2, offset)
+            c.turn(Face.LEFT, -2, offset)
+            c.turn(Face.UP, 2, offset)
+            c.turn(Face.DOWN, -2, offset)
+            c.turn(Face.FRONT, 2, offset)
+            c.turn(Face.BACK, -2, offset)
+        print(c.layout, "\n")
+
+    def timing(cube_size: int) -> None:
+        import time
+
+        print("Cube size:", cube_size)
+
+        runs = 1000
+        start = time.perf_counter()
+        for i in range(runs):
+            Cube(2)
+        end = time.perf_counter()
+        time_per_init = (end - start) / runs
+        print(f"\ttpi={time_per_init:.2e} ips={1/time_per_init:.0f}")
+
+        runs = 10000
+        c = Cube(2)
+        start = time.perf_counter()
+        for i in range(runs):
+            for face in Face:
+                c.turn(face, -8)
+        end = time.perf_counter()
+        time_per_turn = (end - start) / runs / 6
+
+        print(f"\ttpt={time_per_turn:.2e} tps={1/time_per_turn:.0f}")
+
+    main()
+
+    for cube_size in range(1, 100):
+        # timing(cube_size)
+        pass
