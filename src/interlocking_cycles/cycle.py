@@ -28,13 +28,13 @@ class InterlockingCycles(Generic[CycleID, PositionID, ValueType]):
         values: Mapping[PositionID, ValueType],
     ):
         unique_position_ids = set(itertools.chain(*config.values()))
-        positions = {
+        self.positions = {
             position_id: Position(values[position_id])
             for position_id in unique_position_ids
         }
 
         self.cycles: dict[CycleID, tuple[Position[ValueType], ...]] = {
-            cycle_id: tuple(positions[position_id] for position_id in position_ids)
+            cycle_id: tuple(self.positions[position_id] for position_id in position_ids)
             for cycle_id, position_ids in config.items()
         }
 
@@ -52,12 +52,8 @@ if __name__ == "__main__":
     values: dict[int, int] = {i: i for i in range(1, 8)}
 
     ic = InterlockingCycles[Literal[1, 2, 3, 4], int, int](config, values)
-    from typing import TYPE_CHECKING
-
-    if TYPE_CHECKING:
-        reveal_type(ic.cycles)
-
     from pprint import pprint
+    from typing import TYPE_CHECKING
 
     pprint(ic.cycles)
 
