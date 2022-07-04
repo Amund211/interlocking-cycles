@@ -53,7 +53,6 @@ if __name__ == "__main__":
 
     ic = InterlockingCycles[Literal[1, 2, 3, 4], int, int](config, values)
     from pprint import pprint
-    from typing import TYPE_CHECKING
 
     pprint(ic.cycles)
 

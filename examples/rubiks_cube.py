@@ -205,8 +205,8 @@ class Cube:
         for face in Face:
             for offset in range(1, self.size - 1):
                 axis_coordinate = self.radius - offset
-                if not self.include_center and axis_coordinate >= 0:
-                    axis_coordinate += 1
+                if not self.include_center and axis_coordinate <= 0:
+                    axis_coordinate -= 1
 
                 config[Cycle(face, offset, True)] = make_cube_cycle(
                     face,
@@ -301,7 +301,6 @@ class Cube:
                 )
                 for position in self.interlocking_cycles.cycles[cycle_id]:
                     position.value.rotate(face, amount)
-                    pass
 
     @property
     def layout(self) -> str:
@@ -450,32 +449,84 @@ if __name__ == "__main__":
             c.turn(Face.BACK, -2, offset)
         print(c.layout, "\n")
 
+        c = Cube(4)
+        c.turn(Face.UP, 2, 2)
+        print(c.layout, "\n")
+        c.turn(Face.RIGHT, 2, 1)
+        print(c.layout, "\n")
+        for offset in range(1, 2):
+            c.turn(Face.RIGHT, 2, offset)
+            c.turn(Face.LEFT, -2, offset)
+            c.turn(Face.UP, 2, offset)
+            c.turn(Face.DOWN, -2, offset)
+            c.turn(Face.FRONT, 2, offset)
+            c.turn(Face.BACK, -2, offset)
+        print(c.layout, "\n")
+
     def timing(cube_size: int) -> None:
         import time
 
-        print("Cube size:", cube_size)
-
-        runs = 1000
+        runs = max(int(16000 * cube_size ** (-2)), 1)
         start = time.perf_counter()
         for i in range(runs):
-            Cube(2)
+            Cube(cube_size)
         end = time.perf_counter()
         time_per_init = (end - start) / runs
-        print(f"\ttpi={time_per_init:.2e} ips={1/time_per_init:.0f}")
 
-        runs = 10000
-        c = Cube(2)
+        runs = max(int(20000 * cube_size ** (-2)), 1)
+        c = Cube(cube_size)
         start = time.perf_counter()
         for i in range(runs):
             for face in Face:
-                c.turn(face, -8)
+                c.turn(face, 1)
         end = time.perf_counter()
-        time_per_turn = (end - start) / runs / 6
+        time_per_faceturn = (end - start) / runs / 6
 
-        print(f"\ttpt={time_per_turn:.2e} tps={1/time_per_turn:.0f}")
+        runs = max(int(20000 * cube_size ** (-1)), 1)
+        c = Cube(cube_size)
+        start = time.perf_counter()
+        for i in range(runs):
+            for face in Face:
+                c.turn(face, 1, 1)
+        end = time.perf_counter()
+        time_per_sliceturn = (end - start) / runs / 6
+
+        return time_per_init, time_per_faceturn, time_per_sliceturn
+
+    def plot_timing() -> None:
+        import math
+
+        import matplotlib.pyplot as plt
+
+        init = []
+        faceturn = []
+        sliceturn = []
+        cube_sizes = tuple(range(3, 201))
+        for cube_size in cube_sizes:
+            time_per_init, time_per_faceturn, time_per_sliceturn = timing(cube_size)
+            print("Cube size:", cube_size)
+            print(f"\ttpi ={time_per_init:.2e} ips={1/time_per_init:.0f}")
+            print(f"\ttpft={time_per_faceturn:.2e} tps={1/time_per_faceturn:.0f}")
+            print(f"\ttpst={time_per_sliceturn:.2e} tps={1/time_per_sliceturn:.0f}")
+            init.append(time_per_init)
+            faceturn.append(time_per_faceturn)
+            sliceturn.append(time_per_sliceturn)
+
+        distance = math.log(cube_sizes[-1]) - math.log(cube_sizes[40])
+        init_distance = math.log(init[-1]) - math.log(init[40])
+        faceturn_distance = math.log(faceturn[-1]) - math.log(faceturn[40])
+        sliceturn_distance = math.log(sliceturn[-1]) - math.log(sliceturn[40])
+        print(init_distance / distance)
+        print(faceturn_distance / distance)
+        print(sliceturn_distance / distance)
+
+        plt.loglog(cube_sizes, init, label="init")
+        plt.loglog(cube_sizes, faceturn, label="faceturn")
+        plt.loglog(cube_sizes, sliceturn, label="sliceturn")
+        plt.grid()
+        plt.legend()
+        plt.show()
 
     main()
 
-    for cube_size in range(1, 100):
-        # timing(cube_size)
-        pass
+    plot_timing()
