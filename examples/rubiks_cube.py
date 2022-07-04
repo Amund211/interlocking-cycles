@@ -71,14 +71,6 @@ class Face(Enum):
         return 1 if self in {Face.UP, Face.RIGHT, Face.FRONT} else -1
 
     @cache
-    def coordinate(self, cube_radius: int) -> Coordinate:
-        """The coordinate of the face"""
-        coordinate = [0] * 3
-        coordinate[self.axis] = self.sign * cube_radius
-
-        return tuple(coordinate)  # type: ignore
-
-    @cache
     def rotate(self, axis: Axis, amount: int) -> Face:
         amount %= 4
         if amount == 0:
@@ -268,9 +260,9 @@ class Cube:
         for x, y, z in itertools.product(
             *((-self.radius, self.radius) for _ in range(3))
         ):
-            x_face = Face.LEFT if x < 0 else Face.RIGHT
-            y_face = Face.DOWN if y < 0 else Face.UP
-            z_face = Face.BACK if z < 0 else Face.FRONT
+            x_face = Axis.X.face(x > 0)
+            y_face = Axis.Y.face(y > 0)
+            z_face = Axis.Z.face(z > 0)
 
             clockwise_sides = (Face.FRONT, Face.LEFT, Face.BACK, Face.RIGHT)
 
@@ -334,6 +326,7 @@ class Cube:
                 for point in square
             )
 
+            # Offset from left edge
             x_offset = {
                 Face.LEFT: 0,
                 Face.FRONT: 1,
@@ -342,12 +335,14 @@ class Cube:
                 Face.UP: 1,
                 Face.DOWN: 1,
             }[face]
+
+            # Offset from bottom edge
             y_offset = {
                 Face.LEFT: 1,
                 Face.FRONT: 1,
                 Face.RIGHT: 1,
                 Face.BACK: 1,
-                Face.UP: 2,  # Offset from bottom
+                Face.UP: 2,
                 Face.DOWN: 0,
             }[face]
 
@@ -379,19 +374,12 @@ class Cube:
         return "\n".join("".join(line) for line in reversed(result))
 
     def related_faces(self, coordinate: Coordinate) -> tuple[Face, ...]:
+        """Return a tuple of faces touching the piece at the given coordinate"""
         related_faces: list[Face] = []
         for value, axis in zip(coordinate, Axis):
             if abs(value) == self.radius:
-                related_faces.append(
-                    {
-                        (Axis.X, False): Face.LEFT,
-                        (Axis.X, True): Face.RIGHT,
-                        (Axis.Y, False): Face.DOWN,
-                        (Axis.Y, True): Face.UP,
-                        (Axis.Z, False): Face.BACK,
-                        (Axis.Z, True): Face.FRONT,
-                    }[(axis, value > 0)]
-                )
+                related_faces.append(axis.face(value > 0))
+
         return tuple(related_faces)
 
     def color(self, coordinate: Coordinate, face: Face) -> Color:
@@ -409,6 +397,7 @@ class Cube:
         elif isinstance(piece, Corner):
             if face is piece.facing:
                 return piece.colors[0]
+
             face_order = {
                 (Face.RIGHT, Face.UP, Face.FRONT): (Face.RIGHT, Face.FRONT, Face.UP),
                 (Face.RIGHT, Face.UP, Face.BACK): (Face.RIGHT, Face.UP, Face.BACK),
@@ -425,8 +414,10 @@ class Cube:
             }[
                 related_faces  # type: ignore
             ]
+
             if face_order[(face_order.index(piece.facing) + 1) % 3] is face:
                 return piece.colors[1]
+
             return piece.colors[2]
 
 
