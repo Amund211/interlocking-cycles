@@ -171,7 +171,8 @@ def make_cube_cycle(
     )  # type: ignore
 
     # Reverse the order on the negative face so the cycle is clockwise
-    if face.sign < 0:
+    # On Y, the remaining axes form a left-handed coordinate system
+    if (face.sign < 0) ^ (face.axis is Axis.Y):
         return tuple(reversed(cycle))
 
     return cycle
